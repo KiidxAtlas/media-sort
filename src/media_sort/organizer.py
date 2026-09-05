@@ -51,22 +51,20 @@ def move_file(src: Path, dst: Path) -> str | None:
         os.remove(str(src))
     except OSError:
         # Copy succeeded, remove failed — file exists at destination, source stays
-        # This is safe: user has the file at the destination
         return None
 
     return None
 
 
 def organize(
-    video_src: Path | None,
-    image_src: Path | None,
+    video_srcs: list[Path],
+    image_srcs: list[Path],
     video_dest: Path | None,
     image_dest: Path | None,
     dry_run: bool = False,
-    verbose: bool = False,
 ):
     """
-    Organize media files from separate video/image sources to separate destinations.
+    Organize media files from multiple sources per category to separate destinations.
     Yields status events:
       ("found", count)
       ("moving", relative_path, dest_relative_path)
@@ -80,11 +78,11 @@ def organize(
     skipped = 0
     errors = 0
 
-    def process_files(src: Path, dest: Path, category: str):
+    def process_src(src: Path, dest: Path, category: str):
         nonlocal total, moved, skipped, errors
 
         if not src.is_dir():
-            yield ("skip_category", category, f"Source not found: {src}")
+            yield ("skip_src", category, f"Not a directory: {src}")
             return
 
         if not dry_run:
@@ -128,9 +126,11 @@ def organize(
 
     yield ("start",)
 
-    if video_src and video_dest:
-        yield from process_files(video_src, video_dest, "videos")
-    if image_src and image_dest:
-        yield from process_files(image_src, image_dest, "images")
+    if video_dest and video_srcs:
+        for src in video_srcs:
+            yield from process_src(src, video_dest, "videos")
+    if image_dest and image_srcs:
+        for src in image_srcs:
+            yield from process_src(src, image_dest, "images")
 
     yield ("done", moved, skipped, errors, total)

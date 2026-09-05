@@ -8,22 +8,43 @@ from pathlib import Path
 
 from media_sort.organizer import organize, VIDEO_EXTS, IMAGE_EXTS, ALL_EXTS
 
+# --- Color palette ---
+COLORS = {
+    "bg": "#1a1a2e",
+    "fg": "#e0e0e0",
+    "card_bg": "#16213e",
+    "card_border": "#0f3460",
+    "accent_video": "#e94560",
+    "accent_image": "#00b4d8",
+    "btn_bg": "#0f3460",
+    "btn_hover": "#1a4a7a",
+    "btn_active": "#16213e",
+    "success": "#4caf50",
+    "warning": "#ff9800",
+    "error": "#f44336",
+    "text_dim": "#8892a0",
+}
+
 
 class App:
-    WIDTH = 780
-    HEIGHT = 700
+    WIDTH = 820
+    HEIGHT = 740
 
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Media Sort — Organize Videos & Images")
+        self.root.title("Media Sort")
         self.root.geometry(f"{self.WIDTH}x{self.HEIGHT}")
-        self.root.minsize(640, 500)
-        self.root.configure(padx=20, pady=16)
+        self.root.minsize(680, 520)
+        self.root.configure(bg=COLORS["bg"])
 
-        self.video_src = tk.StringVar()
-        self.image_src = tk.StringVar()
+        # Multiple sources per category
+        self.video_srcs: list[str] = []
+        self.image_srcs: list[str] = []
+
+        # Single destination per category
         self.video_dest = tk.StringVar()
         self.image_dest = tk.StringVar()
+
         self.dry_run = tk.BooleanVar(value=False)
         self.verbose = tk.BooleanVar(value=False)
 
@@ -31,57 +52,137 @@ class App:
         self._org_thread = None
         self._stop_requested = False
 
+        self._apply_theme()
         self._build_ui()
+
+    def _apply_theme(self):
+        """Apply dark theme to all Tkinter widgets."""
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure(".", background=COLORS["bg"], foreground=COLORS["fg"],
+                        fieldbackground=COLORS["card_bg"], font=("Segoe UI", 9))
+        style.configure("Treeview", background=COLORS["card_bg"], foreground=COLORS["fg"],
+                        fieldbackground=COLORS["card_bg"], rowheight=22)
+        style.configure("Treeview.Heading", background=COLORS["card_border"],
+                        foreground=COLORS["fg"], font=("Segoe UI", 9, "bold"))
+        style.map("Treeview", background=[("selected", COLORS["btn_hover"])])
+        style.configure("TButton", background=COLORS["btn_bg"], foreground=COLORS["fg"],
+                        font=("Segoe UI", 9, "bold"), padding=(12, 6))
+        style.map("TButton", background=[("active", COLORS["btn_hover"]),
+                                        ("pressed", COLORS["btn_active"])])
+        style.configure("TLabel", background=COLORS["bg"], foreground=COLORS["fg"])
+        style.configure("TEntry", fieldbackground=COLORS["card_bg"], foreground=COLORS["fg"])
+        style.configure("TLabelframe", background=COLORS["bg"], foreground=COLORS["fg"],
+                        bordercolor=COLORS["card_border"])
+        style.configure("TLabelframe.Label", font=("Segoe UI", 10, "bold"), foreground=COLORS["fg"])
+        style.configure("TCheckbutton", background=COLORS["bg"], foreground=COLORS["fg"])
+        style.configure("TListbox", background=COLORS["card_bg"], foreground=COLORS["fg"],
+                        selectbackground=COLORS["btn_hover"], selectforeground=COLORS["fg"])
+        style.configure("Horizontal.TProgressbar", background=COLORS["accent_video"],
+                        troughcolor=COLORS["card_border"])
 
     # --- UI Construction ---
 
     def _build_ui(self):
-        title = tk.Label(self.root, text="Media Sort", font=("Segoe UI", 20, "bold"))
-        title.grid(row=0, column=0, columnspan=3, pady=(0, 12), sticky="w")
+        # Title bar
+        title_frame = tk.Frame(self.root, bg=COLORS["bg"], highlightthickness=0)
+        title_frame.grid(row=0, column=0, columnspan=5, sticky="we", pady=(0, 12))
 
-        # Videos section
-        vf = tk.LabelFrame(self.root, text="Videos", font=("Segoe UI", 10, "bold"), padx=12, pady=8)
-        vf.grid(row=1, column=0, columnspan=3, sticky="we", pady=(0, 8))
-        self._folder_row(vf, "Source:", "Destination:", 0, self.video_src, self.video_dest)
+        title = tk.Label(title_frame, text="Media Sort", font=("Segoe UI", 22, "bold"),
+                         bg=COLORS["bg"], fg=COLORS["fg"])
+        title.pack(side="left")
 
-        # Images section
-        imf = tk.LabelFrame(self.root, text="Images", font=("Segoe UI", 10, "bold"), padx=12, pady=8)
-        imf.grid(row=2, column=0, columnspan=3, sticky="we", pady=(0, 8))
-        self._folder_row(imf, "Source:", "Destination:", 0, self.image_src, self.image_dest)
+        subtitle = tk.Label(title_frame, text="Organize videos & images into categorized folders",
+                            font=("Segoe UI", 9), bg=COLORS["bg"], fg=COLORS["text_dim"])
+        subtitle.pack(side="left", padx=(12, 0), pady=(4, 0))
 
-        # Options
-        of = tk.Frame(self.root)
-        of.grid(row=3, column=0, columnspan=3, pady=(4, 12))
-        tk.Checkbutton(of, text="Dry Run (preview only)", variable=self.dry_run, font=("Segoe UI", 9)).pack(side="left", padx=(0, 16))
-        tk.Checkbutton(of, text="Verbose (show each file)", variable=self.verbose, font=("Segoe UI", 9)).pack(side="left")
+        # ── Videos Card ──
+        vf = tk.LabelFrame(self.root, text="  🎬  Videos", font=("Segoe UI", 10, "bold"),
+                           padx=16, pady=12)
+        vf.grid(row=1, column=0, columnspan=5, sticky="we", pady=(0, 8))
+        vf.configure(fg=COLORS["accent_video"],
+                     highlightbackground=COLORS["accent_video"], highlightthickness=1)
 
-        # Buttons
-        bf = tk.Frame(self.root)
-        bf.grid(row=4, column=0, columnspan=3, pady=(0, 8))
-        self.scan_btn = tk.Button(bf, text="🔍 Scan", command=self._scan, font=("Segoe UI", 10, "bold"), width=14)
+        self.video_src_list = tk.Listbox(vf, height=4, selectmode=tk.EXTENDED,
+                                           font=("Segoe UI", 9), bg=COLORS["card_bg"],
+                                           fg=COLORS["fg"], selectbackground=COLORS["btn_hover"])
+        self._build_source_list(vf, "Sources", "video", 0, 0, self.video_src_list)
+        self._build_dest_row(vf, 2, 0)
+
+        # ── Images Card ──
+        imf = tk.LabelFrame(self.root, text="  🖼️  Images", font=("Segoe UI", 10, "bold"),
+                            padx=16, pady=12)
+        imf.grid(row=2, column=0, columnspan=5, sticky="we", pady=(0, 8))
+        imf.configure(fg=COLORS["accent_image"],
+                      highlightbackground=COLORS["accent_image"], highlightthickness=1)
+
+        self.image_src_list = tk.Listbox(imf, height=4, selectmode=tk.EXTENDED,
+                                           font=("Segoe UI", 9), bg=COLORS["card_bg"],
+                                           fg=COLORS["fg"], selectbackground=COLORS["btn_hover"])
+        self._build_source_list(imf, "Sources", "image", 0, 0, self.image_src_list)
+        self._build_dest_row(imf, 2, 0)
+
+        # ── Options Row ──
+        of = tk.Frame(self.root, bg=COLORS["bg"])
+        of.grid(row=3, column=0, columnspan=5, pady=(4, 10))
+
+        self._chk = tk.Checkbutton(of, text="Dry Run", variable=self.dry_run,
+                                    font=("Segoe UI", 9), bg=COLORS["bg"], fg=COLORS["fg"],
+                                    activebackground=COLORS["bg"])
+        self._chk.pack(side="left", padx=(0, 16))
+
+        self._verb = tk.Checkbutton(of, text="Verbose", variable=self.verbose,
+                                     font=("Segoe UI", 9), bg=COLORS["bg"], fg=COLORS["fg"],
+                                     activebackground=COLORS["bg"])
+        self._verb.pack(side="left")
+
+        # ── Action Buttons ──
+        bf = tk.Frame(self.root, bg=COLORS["bg"])
+        bf.grid(row=4, column=0, columnspan=5, pady=(0, 8))
+
+        self.scan_btn = tk.Button(bf, text="🔍  Scan", command=self._scan,
+                                   font=("Segoe UI", 10, "bold"), bg=COLORS["btn_bg"],
+                                   fg=COLORS["fg"], activebackground=COLORS["btn_hover"],
+                                   activeforeground=COLORS["fg"], relief="flat",
+                                   padx=20, pady=8, cursor="hand2")
         self.scan_btn.pack(side="left", padx=(0, 8))
-        self.move_btn = tk.Button(bf, text="⚡ Organize", command=self._organize, font=("Segoe UI", 10, "bold"), width=14, state="disabled")
+
+        self.move_btn = tk.Button(bf, text="⚡  Organize", command=self._organize,
+                                   font=("Segoe UI", 10, "bold"), bg=COLORS["accent_video"],
+                                   fg="#fff", activebackground=COLORS["btn_hover"],
+                                   activeforeground=COLORS["fg"], relief="flat",
+                                   padx=20, pady=8, cursor="hand2", state="disabled")
         self.move_btn.pack(side="left", padx=(0, 8))
-        tk.Button(bf, text="Clear", command=self._clear, font=("Segoe UI", 10), width=10).pack(side="left")
 
-        # Stats
-        self.stats_var = tk.StringVar(value="Select folders and click Scan.")
-        tk.Label(self.root, textvariable=self.stats_var, font=("Segoe UI", 9), fg="#555").grid(row=5, column=0, columnspan=3, sticky="we", pady=(0, 2))
+        tk.Button(bf, text="Clear", command=self._clear,
+                   font=("Segoe UI", 9), bg=COLORS["btn_bg"], fg=COLORS["fg"],
+                   activebackground=COLORS["btn_hover"], relief="flat",
+                   padx=16, pady=8, cursor="hand2").pack(side="left")
 
-        self.progress = ttk.Progressbar(self.root, mode="determinate")
-        self.progress.grid(row=6, column=0, columnspan=3, sticky="we", pady=(0, 4))
+        # ── Status Bar ──
+        self.stats_var = tk.StringVar(value="Add source folders, set destinations, then scan.")
+        self.stats_lbl = tk.Label(self.root, textvariable=self.stats_var,
+                                   font=("Segoe UI", 9), bg=COLORS["bg"], fg=COLORS["text_dim"])
+        self.stats_lbl.grid(row=5, column=0, columnspan=5, sticky="we", pady=(0, 2))
 
-        # File list
-        lf = tk.LabelFrame(self.root, text="Found Files", font=("Segoe UI", 9, "bold"), padx=4, pady=4)
-        lf.grid(row=7, column=0, columnspan=3, sticky="nsew", pady=(4, 0))
+        self.progress = ttk.Progressbar(self.root, mode="determinate", length=700)
+        self.progress.grid(row=6, column=0, columnspan=5, sticky="we", pady=(0, 4))
+        self.progress.configure(style="Horizontal.TProgressbar")
+
+        # ── File List ──
+        lf = tk.LabelFrame(self.root, text="  Found Files", font=("Segoe UI", 10, "bold"),
+                           padx=8, pady=6)
+        lf.grid(row=7, column=0, columnspan=5, sticky="nsew", pady=(4, 0))
+
         cols = ("source", "category", "destination")
         self.tree = ttk.Treeview(lf, columns=cols, show="headings", selectmode="extended")
-        self.tree.heading("source", text="Source File")
-        self.tree.heading("category", text="Category")
+        self.tree.heading("source", text="File")
+        self.tree.heading("category", text="Type")
         self.tree.heading("destination", text="Destination")
-        self.tree.column("source", width=260, minwidth=150)
-        self.tree.column("category", width=100, minwidth=60, anchor="center")
-        self.tree.column("destination", width=260, minwidth=150)
+        self.tree.column("source", width=280, minwidth=160)
+        self.tree.column("category", width=90, minwidth=60, anchor="center")
+        self.tree.column("destination", width=280, minwidth=160)
+
         lb = ttk.Scrollbar(lf, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=lb.set)
         self.tree.grid(row=0, column=0, sticky="nsew")
@@ -89,38 +190,104 @@ class App:
         lf.grid_rowconfigure(0, weight=1)
         lf.grid_columnconfigure(0, weight=1)
 
-        # Log
-        lgf = tk.LabelFrame(self.root, text="Log", font=("Segoe UI", 9, "bold"), padx=4, pady=4)
-        lgf.grid(row=8, column=0, columnspan=3, sticky="nsew", pady=(4, 0))
-        self.log_text = tk.Text(lgf, height=5, font=("Consolas", 9), state="disabled", wrap="word")
+        # ── Log ──
+        lgf = tk.LabelFrame(self.root, text="  Log", font=("Segoe UI", 10, "bold"),
+                            padx=8, pady=6)
+        lgf.grid(row=8, column=0, columnspan=5, sticky="nsew", pady=(4, 0))
+
+        self.log_text = tk.Text(lgf, height=4, font=("Consolas", 9), state="disabled",
+                                wrap="word", bg=COLORS["card_bg"], fg=COLORS["fg"],
+                                insertbackground=COLORS["fg"], padx=8, pady=4)
         lgs = ttk.Scrollbar(lgf, orient="vertical", command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=lgs.set)
         lgs.pack(side="right", fill="y")
         self.log_text.pack(side="left", fill="both", expand=True)
 
+        # Grid weights
         self.root.grid_rowconfigure(7, weight=3)
         self.root.grid_rowconfigure(8, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
 
-    def _folder_row(self, parent, src_label, dest_label, col_off, src_var, dest_var):
-        tk.Label(parent, text=src_label, font=("Segoe UI", 9)).grid(row=0, column=0 + col_off, sticky="w", pady=(0, 2))
-        e1 = tk.Entry(parent, textvariable=src_var, width=38, state="readonly")
-        e1.grid(row=1, column=0 + col_off, sticky="we", pady=(0, 4))
-        tk.Button(parent, text="Browse...", command=lambda: self._pick(src_var, "Source"), font=("Segoe UI", 8), width=10).grid(row=1, column=1 + col_off, padx=(4, 0), pady=(0, 4))
-        tk.Label(parent, text=dest_label, font=("Segoe UI", 9)).grid(row=0, column=2 + col_off, sticky="w", pady=(0, 2))
-        e2 = tk.Entry(parent, textvariable=dest_var, width=38, state="readonly")
-        e2.grid(row=1, column=2 + col_off, sticky="we", pady=(0, 4))
-        tk.Button(parent, text="Browse...", command=lambda: self._pick(dest_var, "Destination"), font=("Segoe UI", 8), width=10).grid(row=1, column=3 + col_off, padx=(4, 0), pady=(0, 4))
-        parent.grid_columnconfigure(0 + col_off, weight=1)
-        parent.grid_columnconfigure(2 + col_off, weight=1)
+    def _build_source_list(self, parent, label, category, r, c, listbox: tk.Listbox):
+        """Build a source folder list with add/remove buttons."""
+        tk.Label(parent, text=label, font=("Segoe UI", 9, "bold"),
+                 bg=COLORS["card_bg"], fg=COLORS["text_dim"]).grid(row=r, column=c,
+                 sticky="w", pady=(0, 4))
 
-    # --- Event Handlers ---
+        listbox.grid(row=r+1, column=c, columnspan=2, sticky="we", pady=(0, 4))
+        listbox.configure(selectbackground=COLORS["btn_hover"])
 
-    def _pick(self, var: tk.StringVar, kind: str):
-        path = filedialog.askdirectory(title=f"Select {kind} Folder")
+        sb = ttk.Scrollbar(parent, orient="vertical", command=listbox.yview)
+        listbox.configure(yscrollcommand=sb.set)
+        sb.grid(row=r+1, column=c+2, sticky="ns")
+
+        btns = tk.Frame(parent, bg=COLORS["card_bg"])
+        btns.grid(row=r+1, column=c+3, sticky="ns", pady=(0, 4))
+
+        tk.Button(btns, text="+", font=("Segoe UI", 14), width=2, height=1,
+                  bg=COLORS["success"], fg="#fff", relief="flat", cursor="hand2",
+                  command=lambda: self._add_source(category)).pack(pady=(0, 2))
+        tk.Button(btns, text="−", font=("Segoe UI", 14), width=2, height=1,
+                  bg=COLORS["error"], fg="#fff", relief="flat", cursor="hand2",
+                  command=lambda: self._remove_source(category)).pack(pady=2)
+
+        parent.grid_columnconfigure(c, weight=1)
+
+    def _build_dest_row(self, parent, r, c):
+        """Build a destination row with browse button."""
+        tk.Label(parent, text="Destination:", font=("Segoe UI", 9, "bold"),
+                 bg=COLORS["card_bg"], fg=COLORS["text_dim"]).grid(row=r, column=c,
+                 sticky="w", pady=(4, 2))
+
+        entry = tk.Entry(parent, textvariable=self.video_dest if c == 0 else self.image_dest,
+                         width=40, state="readonly", font=("Segoe UI", 9),
+                         bg=COLORS["card_bg"], fg=COLORS["fg"])
+        entry.grid(row=r+1, column=c, columnspan=2, sticky="we", pady=(0, 4))
+
+        tk.Button(parent, text="Browse...", command=(
+            lambda: self._pick_dest(self.video_dest, "Video Destination") if c == 0
+            else self._pick_dest(self.image_dest, "Image Destination")
+        ), font=("Segoe UI", 8, "bold"), bg=COLORS["btn_bg"], fg=COLORS["fg"],
+                  relief="flat", padx=12, pady=4, cursor="hand2").grid(row=r+1, column=c+2, pady=(0, 4))
+
+    # --- Source Management ---
+
+    def _add_source(self, category: str):
+        path = filedialog.askdirectory(title=f"Add Source Folder ({'Videos' if category == 'video' else 'Images'})")
+        if path:
+            path = str(Path(path).resolve())
+            if category == "video":
+                if path not in self.video_srcs:
+                    self.video_srcs.append(path)
+                    self.video_src_list.insert(tk.END, path)
+            else:
+                if path not in self.image_srcs:
+                    self.image_srcs.append(path)
+                    self.image_src_list.insert(tk.END, path)
+
+    def _remove_source(self, category: str):
+        selected = []
+        for idx in (self.video_src_list.curselection() if category == "video"
+                    else self.image_src_list.curselection()):
+            selected.append(idx)
+        for idx in reversed(selected):
+            if category == "video":
+                self.video_srcs.pop(idx)
+                self.video_src_list.delete(idx)
+            else:
+                self.image_srcs.pop(idx)
+                self.image_src_list.delete(idx)
+        self._clear_results()
+
+    # --- Folder Picking ---
+
+    def _pick_dest(self, var: tk.StringVar, kind: str):
+        path = filedialog.askdirectory(title=f"Select {kind}")
         if path:
             var.set(path)
             self._clear_results()
+
+    # --- UI Helpers ---
 
     def _log(self, msg: str):
         self.log_text.configure(state="normal")
@@ -130,7 +297,7 @@ class App:
 
     def _clear(self):
         self._clear_results()
-        self.stats_var.set("Select folders and click Scan.")
+        self.stats_var.set("Add source folders, set destinations, then scan.")
         self.progress["value"] = 0
 
     def _clear_results(self):
@@ -138,9 +305,11 @@ class App:
             self.tree.delete(item)
         self.move_btn.configure(state="disabled")
 
+    # --- Scan ---
+
     def _scan(self):
-        if not self.video_src.get() and not self.image_src.get():
-            messagebox.showwarning("No Source", "Please select at least one source folder.")
+        if not self.video_srcs and not self.image_srcs:
+            messagebox.showwarning("No Source", "Please add at least one source folder.")
             return
 
         self._clear_results()
@@ -151,21 +320,24 @@ class App:
         def do_scan():
             try:
                 files = []
-                sources = {}
-                if self.video_src.get():
-                    sources["videos"] = Path(self.video_src.get())
-                if self.image_src.get():
-                    sources["images"] = Path(self.image_src.get())
-
-                for category, src_path in sources.items():
-                    if not src_path.is_dir():
+                for path in self.video_srcs:
+                    src = Path(path)
+                    if not src.is_dir():
                         continue
-                    ext_set = VIDEO_EXTS if category == "videos" else IMAGE_EXTS
-                    for dirpath, _, filenames in os.walk(src_path):
+                    for dirpath, _, filenames in os.walk(src):
                         for fname in filenames:
                             fp = Path(dirpath) / fname
-                            if fp.suffix.lower() in ext_set:
-                                files.append((fp, category, src_path))
+                            if fp.suffix.lower() in VIDEO_EXTS:
+                                files.append((fp, "videos", src))
+                for path in self.image_srcs:
+                    src = Path(path)
+                    if not src.is_dir():
+                        continue
+                    for dirpath, _, filenames in os.walk(src):
+                        for fname in filenames:
+                            fp = Path(dirpath) / fname
+                            if fp.suffix.lower() in IMAGE_EXTS:
+                                files.append((fp, "images", src))
 
                 files.sort(key=lambda x: x[0])
                 self._scan_count = len(files)
@@ -185,9 +357,9 @@ class App:
             cat_display = ("🎬 " if category == "videos" else "🖼️ ") + ext.upper()
 
             dest_var = self.video_dest if category == "videos" else self.image_dest
-            dest = Path(dest_var.get()) if dest_var.get() else None
-            if dest and dest != src_path:
-                dest_display = str(dest / category / ext / fp.name)
+            dest_str = dest_var.get()
+            if dest_str:
+                dest_display = str(Path(dest_str) / category / ext / fp.name)
             else:
                 dest_display = "(no destination set)"
 
@@ -204,20 +376,20 @@ class App:
         self._log(f"Error scanning: {err}\n")
         self.stats_var.set("Scan failed.")
 
+    # --- Organize ---
+
     def _organize(self):
-        video_src = Path(self.video_src.get()) if self.video_src.get() else None
-        image_src = Path(self.image_src.get()) if self.image_src.get() else None
         video_dest = Path(self.video_dest.get()) if self.video_dest.get() else None
         image_dest = Path(self.image_dest.get()) if self.image_dest.get() else None
 
-        if not video_src and not image_src:
-            messagebox.showwarning("No Source", "Please select at least one source folder.")
+        if not self.video_srcs and not self.image_srcs:
+            messagebox.showwarning("No Source", "Please add at least one source folder.")
             return
-        if video_src and not video_dest:
-            messagebox.showwarning("Missing Destination", "Source is set for Videos but no destination was selected.")
+        if self.video_srcs and not video_dest:
+            messagebox.showwarning("Missing Destination", "Videos have sources but no destination set.")
             return
-        if image_src and not image_dest:
-            messagebox.showwarning("Missing Destination", "Source is set for Images but no destination was selected.")
+        if self.image_srcs and not image_dest:
+            messagebox.showwarning("Missing Destination", "Images have sources but no destination set.")
             return
 
         dry = self.dry_run.get()
@@ -234,23 +406,26 @@ class App:
         self.stats_var.set("Organizing...")
         self.progress["value"] = 0
 
+        video_src_paths = [Path(p) for p in self.video_srcs]
+        image_src_paths = [Path(p) for p in self.image_srcs]
+
         self._stop_requested = False
         self._org_thread = threading.Thread(
             target=self._run_organize,
-            args=(video_src, image_src, video_dest, image_dest, dry),
+            args=(video_src_paths, image_src_paths, video_dest, image_dest, dry),
             daemon=True,
         )
         self._org_thread.start()
 
-    def _run_organize(self, video_src, image_src, video_dest, image_dest, dry):
+    def _run_organize(self, video_srcs, image_srcs, video_dest, image_dest, dry):
         moved = skipped = errors = total = 0
-        for event in organize(video_src, image_src, video_dest, image_dest, dry_run=dry):
+        for event in organize(video_srcs, image_srcs, video_dest, image_dest, dry_run=dry):
             if self._stop_requested:
                 break
             kind = event[0]
             if kind == "found":
                 self.root.after(0, lambda c=event[1]: self.stats_var.set(f"Organizing... scanning {c} files"))
-            elif kind == "skip_category":
+            elif kind == "skip_src":
                 self.root.after(0, self._log, f"  ⊘ {event[1]}: {event[2]}")
             elif kind == "moving":
                 self.root.after(0, self._log, f"  → {event[2]}")
