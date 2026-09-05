@@ -73,7 +73,13 @@ def _is_link(path: Path, info: os.stat_result) -> bool:
 
 
 def _check_directory_path(path: Path, *, missing_ok: bool = False) -> None:
-    """Reject links and non-directories in every existing path component."""
+    """Reject links and non-directories in the usable path components.
+
+    Some platforms expose standard directories through a system alias (for
+    example, macOS ``/var``).  Those aliases are safe ancestors of a selected
+    path; a link at the selected path or below it is still rejected.
+    """
+    trusted_ancestor_links = {Path("/var"), Path("/tmp")}
     for part in (*reversed(path.parents), path):
         try:
             info = part.lstat()
@@ -82,11 +88,11 @@ def _check_directory_path(path: Path, *, missing_ok: bool = False) -> None:
                 return
             raise
         if _is_link(part, info):
+            if part != path and part in trusted_ancestor_links:
+                continue
             raise ValueError(f"Symbolic links and junctions are not supported: {part}")
         if not stat.S_ISDIR(info.st_mode):
             raise ValueError(f"Not a directory: {part}")
-
-
 def _root(path: Path, *, destination: bool) -> Path:
     # Do not resolve away links before validating them.
     path = Path(os.path.abspath(path.expanduser()))
