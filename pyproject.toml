@@ -1,6 +1,6 @@
 [project]
 name = "media-sort"
-version = "1.2.1"
+version = "1.2.2"
 description = "GUI tool to organize videos and images into categorized folders"
 readme = "README.md"
 authors = [
