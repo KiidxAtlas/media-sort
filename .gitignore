@@ -4,8 +4,6 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-*.spec
-uv.lock
 
 # Virtual environment
 .venv/

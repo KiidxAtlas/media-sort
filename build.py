@@ -1,36 +1,28 @@
-"""Build script — run with: uv run build.py"""
+"""Build for the current platform with: uv run --locked build.py."""
 
+from pathlib import Path
 import subprocess
 import sys
-import os
 
-def main():
-    print("=" * 40)
-    print("  MediaSort — Build Windows .exe")
-    print("=" * 40)
-    print()
 
-    # Sync deps
-    print("[1/3] Syncing dependencies...")
-    subprocess.run([sys.executable, "-m", "uv", "sync"], check=True)
-    print()
-
-    # Build exe
-    print("[2/3] Building executable...")
+def main() -> int:
+    root = Path(__file__).resolve().parent
+    output = root / "dist" / ("MediaSort.exe" if sys.platform == "win32" else "MediaSort")
+    print(f"Building MediaSort for {sys.platform}...", flush=True)
     result = subprocess.run(
-        [sys.executable, "-m", "uv", "run", "pyinstaller",
-         "--clean", "--noconfirm", "build.spec"],
-        check=True,
+        [sys.executable, "-m", "PyInstaller", "--clean", "--noconfirm", "build.spec"],
+        cwd=root,
+        check=False,
     )
-    print()
-
-    print("[3/3] Done!")
-    print()
-    print("Output: dist/MediaSort.exe")
-    print("Run it by double-clicking or:")
-    print("  dist\\MediaSort.exe")
-    print()
+    if result.returncode:
+        return result.returncode
+    if not output.is_file():
+        print(f"Build failed: expected output is missing: {output}", file=sys.stderr)
+        return 1
+    print(f"Output: {output}")
+    print("Build complete. Launch the executable to verify the GUI before distributing it.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
