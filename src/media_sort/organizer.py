@@ -63,7 +63,9 @@ def _check_cancel(cancel: Event | None) -> None:
 
 
 def _fingerprint(info: os.stat_result) -> tuple[int, ...]:
-    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+    # Creation time is not stable across path and open-handle stats on
+    # Windows; device, file ID, size, and modification time are stable.
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
 
 
 def _is_link(path: Path, info: os.stat_result) -> bool:
