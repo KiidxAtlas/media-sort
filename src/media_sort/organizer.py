@@ -10,6 +10,7 @@ import shutil
 import stat
 import tempfile
 import unicodedata
+from datetime import datetime
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -193,6 +194,7 @@ def build_plan(
     image_dest: Path | None,
     *,
     cancel: Event | None = None,
+    sort_by_date: bool = False,
 ) -> Plan:
     """Snapshot supported regular files without creating or changing any paths.
 
@@ -240,8 +242,11 @@ def build_plan(
                     if identity in seen_files:
                         continue
                     seen_files.add(identity)
-                    assert dest is not None
-                    target = dest / source.suffix.lower().lstrip(".") / source.name
+                    if sort_by_date:
+                        mtime = datetime.fromtimestamp(info.st_mtime)
+                        target = dest / str(mtime.year) / mtime.strftime("%B").lower() / source.name
+                    else:
+                        target = dest / source.suffix.lower().lstrip(".") / source.name
                     status, reason = "ready", ""
                     try:
                         _check_directory_path(target.parent, missing_ok=True)

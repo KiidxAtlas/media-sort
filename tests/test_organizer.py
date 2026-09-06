@@ -364,6 +364,16 @@ class OrganizerTests(unittest.TestCase):
         self.assertEqual(result.status, "moved")
         self.assertEqual(user_file.read_bytes(), b"user data")
 
+    def test_sort_by_date_uses_year_and_month_folders(self):
+        source = self.media("clip.mp4", b"video data")
+        os.utime(source, ns=(1_736_947_200_000_000_000, 1_736_947_200_123_456_789))
+        plan = build_plan([self.source], [], self.destination, None, sort_by_date=True)
+        self.assertEqual(len(plan.items), 1)
+        item = plan.items[0]
+        self.assertEqual(item.target.parent.parent.name, "2025")
+        self.assertEqual(item.target.parent.name, "january")
+        self.assertEqual(item.target.name, "clip.mp4")
+
 
 if __name__ == "__main__":
     unittest.main()
