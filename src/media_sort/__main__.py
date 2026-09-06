@@ -228,6 +228,7 @@ class App:
             value="Add your folders above, then preview what will move."
         )
         self.details = tk.StringVar(value="Nothing moves until you confirm.")
+        self.sort_by_date = tk.BooleanVar(value=False)
         self._theme()
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self._close)
@@ -311,6 +312,17 @@ class App:
             text_color=TEXT,
             font=ctk.CTkFont(size=13, weight="bold"),
         ).pack(side="left")
+        date_toggle = ctk.CTkCheckBox(
+            toolbar,
+            text="Sort by date",
+            variable=self.sort_by_date,
+            font=ctk.CTkFont(size=12),
+            text_color=MUTED,
+            fg_color="#292d38",
+            hover_color="#363c4a",
+            corner_radius=6,
+        )
+        date_toggle.pack(side="right", padx=(0, 8))
         self.view_switch = ctk.CTkSegmentedButton(
             toolbar,
             values=["Files", "Activity"],
@@ -560,7 +572,7 @@ class App:
         self.progress.start()
         self._start(
             lambda: self.events.put(
-                ("plan", build_plan(*arguments, cancel=self.cancel))
+                ("plan", build_plan(*arguments, cancel=self.cancel, sort_by_date=self.sort_by_date.get()))
             )
         )
 
