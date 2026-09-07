@@ -74,6 +74,12 @@ def _is_link(path: Path, info: os.stat_result) -> bool:
         hasattr(path, "is_junction") and path.is_junction()
     )
 
+def _is_same_path(a: Path, b: Path) -> bool:
+    try:
+        return a.samefile(b)
+    except FileNotFoundError:
+        return os.path.normcase(a) == os.path.normcase(b)
+
 
 def _check_directory_path(path: Path, *, missing_ok: bool = False) -> None:
     """Reject links and non-directories in the usable path components.
@@ -151,7 +157,7 @@ def _scan(
     while pending:
         _check_cancel(cancel)
         directory = pending.pop()
-        if any(directory != dest and directory.is_relative_to(dest) for dest in destinations):
+        if any(os.path.normcase(directory) != os.path.normcase(dest) and directory.is_relative_to(dest) for dest in destinations):
             continue
         try:
             info = directory.lstat()
@@ -235,10 +241,14 @@ def build_plan(
             seen_directories: set[tuple[int, int]] = set()
             for root in roots:
                 ancestors = (ancestor.stat() for ancestor in (root, *root.parents))
-                for ancestor in ancestors:
-                    if (ancestor.st_dev, ancestor.st_ino) in destination_ids:
-                        if root != dest:
-                            raise ValueError(f"Source is inside a destination: {root}")
+                if any((info.st_dev, info.st_ino) in destination_ids for info in ancestors):
+                    # Allow source == destination (same inode), but not source inside destination
+                    if not any(
+                        _is_same_path(root, dest)
+                        for dest in destinations
+                        if dest is not None
+                    ):
+                        raise ValueError(f"Source is inside a destination: {root}")
             for root in roots:
                 for source, info in _scan(root, extensions, destinations, destination_ids, seen_directories, warnings, cancel):
                     identity = (info.st_dev, info.st_ino)

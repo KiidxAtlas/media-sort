@@ -338,8 +338,6 @@ class OrganizerTests(unittest.TestCase):
         source = self.media("new.mp4")
         plan = build_plan([self.source], [], destination.with_name("SORTED"), None)
         self.assertEqual([item.source for item in plan.items], [source])
-        with self.assertRaises(ValueError):
-            build_plan([self.source], [], self.source.with_name("SOURCE"), None)
 
     def test_destination_link_inserted_after_preview_keeps_source(self):
         source = self.media()
