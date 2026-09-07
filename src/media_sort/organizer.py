@@ -423,11 +423,11 @@ def execute_plan(plan: Plan, *, cancel: Event | None = None) -> Iterator[Transfe
 
     # Yield non-ready items first
     for item in plan.items:
-        if item.status != "ready":
+        if item.status not in ("ready", "deduplicate"):
             yield TransferResult(item, "skipped" if item.status == "skipped" else "error", item.reason)
 
     # Collect ready items
-    ready = [item for item in plan.items if item.status == "ready"]
+    ready = [item for item in plan.items if item.status in ("ready", "deduplicate")]
     if not ready:
         return
 

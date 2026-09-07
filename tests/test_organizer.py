@@ -370,5 +370,77 @@ class OrganizerTests(unittest.TestCase):
         self.assertEqual(item.target.name, "clip.mp4")
 
 
+    def test_deduplicate_marks_same_content_as_deduplicate(self):
+        target = self.destination / "mp4" / "clip.MP4"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"original media")
+        source = self.media()
+        plan = build_plan([self.source], [], self.destination, None, deduplicate=True)
+        self.assertEqual(len(plan.items), 1)
+        self.assertEqual(plan.items[0].status, "deduplicate")
+        self.assertEqual(plan.items[0].reason, "Duplicate of existing target; source will be removed.")
+
+    def test_deduplicate_removes_source_keeps_target(self):
+        target = self.destination / "mp4" / "clip.MP4"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"original media")
+        self.media()
+        plan = build_plan([self.source], [], self.destination, None, deduplicate=True)
+        result, = execute_plan(plan)
+        self.assertEqual(result.status, "deduplicated")
+        self.assertFalse((self.source / "clip.MP4").exists())
+        self.assertTrue(target.exists())
+        self.assertEqual(target.read_bytes(), b"original media")
+
+    def test_deduplicate_skipped_when_content_differs(self):
+        target = self.destination / "mp4" / "clip.MP4"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"different content!!!")
+        self.media()
+        plan = build_plan([self.source], [], self.destination, None, deduplicate=True)
+        self.assertEqual(len(plan.items), 1)
+        self.assertEqual(plan.items[0].status, "skipped")
+        self.assertEqual(plan.items[0].reason, "Target already exists; source will be kept.")
+
+    def test_deduplicate_ignored_when_disabled(self):
+        target = self.destination / "mp4" / "clip.MP4"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"original media")
+        self.media()
+        plan = build_plan([self.source], [], self.destination, None, deduplicate=False)
+        self.assertEqual(len(plan.items), 1)
+        self.assertEqual(plan.items[0].status, "skipped")
+
+    def test_deduplicate_empty_file_not_deduplicated(self):
+        target = self.destination / "mp4" / "clip.MP4"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"")
+        self.media("clip.MP4", data=b"")
+        plan = build_plan([self.source], [], self.destination, None, deduplicate=True)
+        self.assertEqual(len(plan.items), 1)
+        self.assertEqual(plan.items[0].status, "skipped")
+
+    def test_deduplicate_target_disappears_keeps_source(self):
+        target = self.destination / "mp4" / "clip.MP4"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"original media")
+        self.media()
+        plan = build_plan([self.source], [], self.destination, None, deduplicate=True)
+        target.unlink()
+        result, = execute_plan(plan)
+        self.assertEqual(result.status, "error")
+        self.assertTrue(self.source.exists())
+
+    def test_deduplicate_source_changed_keeps_both(self):
+        target = self.destination / "mp4" / "clip.MP4"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"original media")
+        source = self.media()
+        plan = build_plan([self.source], [], self.destination, None, deduplicate=True)
+        source.write_bytes(b"changed content")
+        result, = execute_plan(plan)
+        self.assertEqual(result.status, "error")
+        self.assertTrue(source.exists())
+        self.assertTrue(target.exists())
 if __name__ == "__main__":
     unittest.main()
