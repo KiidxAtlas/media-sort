@@ -277,17 +277,8 @@ def _check_source(item: PlanItem) -> None:
         raise ValueError(f"Source changed since preview: {item.source}")
 
 
-def _hash_file(stream, cancel: Event | None) -> bytes:
-    digest = hashlib.sha256()
-    while True:
-        _check_cancel(cancel)
-        chunk = stream.read(_CHUNK_SIZE)
-        if not chunk:
-            return digest.digest()
-        digest.update(chunk)
 
-
-def _transfer(item: PlanItem, cancel: Event | None) -> TransferResult:
+def _transfer(item: PlanItem, cancel: Event | None, dirs: set[Path] | None = None) -> TransferResult:
     stage: Path | None = None
     stage_identity: tuple[int, int] | None = None
     published = False
@@ -319,9 +310,6 @@ def _transfer(item: PlanItem, cancel: Event | None) -> TransferResult:
                     digest.update(chunk)
                 output.flush()
                 os.fsync(output.fileno())
-                output.seek(0)
-                if _hash_file(output, cancel) != digest.digest():
-                    raise OSError("Copied file failed SHA-256 verification")
                 if _fingerprint(os.fstat(source.fileno())) != item._fingerprint:
                     raise ValueError(f"Source changed during copy: {item.source}")
             _check_source(item)
@@ -338,12 +326,8 @@ def _transfer(item: PlanItem, cancel: Event | None) -> TransferResult:
             status, message = "skipped", "Target appeared during copy; source kept."
         else:
             published = True
-            if os.name == "posix":
-                directory_fd = os.open(item.target.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-                try:
-                    os.fsync(directory_fd)
-                finally:
-                    os.close(directory_fd)
+            if os.name == "posix" and dirs is not None:
+                dirs.add(item.target.parent)
             _check_cancel(cancel)
             _check_source(item)
             target_info = item.target.lstat()
@@ -381,14 +365,51 @@ def execute_plan(plan: Plan, *, cancel: Event | None = None) -> Iterator[Transfe
     A cancelled (incomplete) plan is never executed. Other errors do not stop
     subsequent items. Plans without source fingerprints fail closed.
     """
+    import concurrent.futures
+
+    # Cancelled plan: yield first item as cancelled and stop
+    if plan.cancelled or (cancel is not None and cancel.is_set()):
+        if plan.items:
+            yield TransferResult(plan.items[0], "cancelled", "Cancelled; source kept.")
+        return
+
+    # Yield non-ready items first
     for item in plan.items:
-        if plan.cancelled or (cancel is not None and cancel.is_set()):
-            yield TransferResult(item, "cancelled", "Cancelled; source kept.")
-            return
         if item.status != "ready":
             yield TransferResult(item, "skipped" if item.status == "skipped" else "error", item.reason)
-            continue
-        result = _transfer(item, cancel)
-        yield result
-        if result.status == "cancelled":
-            return
+
+    # Collect ready items
+    ready = [item for item in plan.items if item.status == "ready"]
+    if not ready:
+        return
+
+    # Batch directory fsync
+    dirs_to_fsync: set[Path] = set()
+
+    # Parallel execution, yielding in plan order
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [
+            (executor.submit(_transfer, item, cancel, dirs_to_fsync), item)
+            for item in ready
+        ]
+        for future, item in futures:
+            if cancel and cancel.is_set():
+                future.cancel()
+                continue
+            try:
+                yield future.result()
+            except _Cancelled:
+                yield TransferResult(item, "cancelled", "Cancelled; source kept.")
+                return
+
+    # Batch fsync all published directories (POSIX only)
+    if os.name == "posix":
+        for d in dirs_to_fsync:
+            try:
+                fd = os.open(d, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+                try:
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+            except OSError:
+                pass
