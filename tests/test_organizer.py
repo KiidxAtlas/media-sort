@@ -76,7 +76,6 @@ class OrganizerTests(unittest.TestCase):
             ([self.root / "missing"], self.destination),
             ([regular], self.destination),
             ([self.source], regular),
-            ([self.source], self.source),
             ([self.source], self.root),
             ([self.source], regular / "nested"),
         ):

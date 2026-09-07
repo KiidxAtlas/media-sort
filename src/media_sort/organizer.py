@@ -151,7 +151,7 @@ def _scan(
     while pending:
         _check_cancel(cancel)
         directory = pending.pop()
-        if any(directory.is_relative_to(dest) for dest in destinations):
+        if any(directory != dest and directory.is_relative_to(dest) for dest in destinations):
             continue
         try:
             info = directory.lstat()
@@ -195,6 +195,7 @@ def build_plan(
     *,
     cancel: Event | None = None,
     sort_by_date: bool = False,
+    deduplicate: bool = False,
 ) -> Plan:
     """Snapshot supported regular files without creating or changing any paths.
 
@@ -234,8 +235,10 @@ def build_plan(
             seen_directories: set[tuple[int, int]] = set()
             for root in roots:
                 ancestors = (ancestor.stat() for ancestor in (root, *root.parents))
-                if any((info.st_dev, info.st_ino) in destination_ids for info in ancestors):
-                    raise ValueError(f"Source is inside or equal to a destination: {root}")
+                for ancestor in ancestors:
+                    if (ancestor.st_dev, ancestor.st_ino) in destination_ids:
+                        if root != dest:
+                            raise ValueError(f"Source is inside a destination: {root}")
             for root in roots:
                 for source, info in _scan(root, extensions, destinations, destination_ids, seen_directories, warnings, cancel):
                     identity = (info.st_dev, info.st_ino)
@@ -256,7 +259,18 @@ def build_plan(
                         if case_insensitive[target.parent]:
                             key = unicodedata.normalize("NFC", key).casefold()
                         if os.path.lexists(target):
-                            status, reason = "skipped", "Target already exists; source will be kept."
+                            if deduplicate and info.st_size > 0:
+                                try:
+                                    target_info = target.lstat()
+                                    if target_info.st_size == info.st_size:
+                                        src_hash = _hash_file(source, cancel)
+                                        tgt_hash = _hash_file(target, cancel)
+                                        if src_hash == tgt_hash:
+                                            status, reason = "deduplicate", "Duplicate of existing target; source will be removed."
+                                except OSError:
+                                    pass
+                            if status == "ready":
+                                status, reason = "skipped", "Target already exists; source will be kept."
                         elif key in reserved:
                             status, reason = "skipped", "Another planned file has the same target; source will be kept."
                         reserved.add(key)
@@ -277,6 +291,16 @@ def _check_source(item: PlanItem) -> None:
         raise ValueError(f"Source changed since preview: {item.source}")
 
 
+def _hash_file(path: Path, cancel: Event | None) -> bytes:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            _check_cancel(cancel)
+            chunk = f.read(_CHUNK_SIZE)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.digest()
 
 def _transfer(item: PlanItem, cancel: Event | None, dirs: set[Path] | None = None) -> TransferResult:
     stage: Path | None = None
@@ -285,6 +309,20 @@ def _transfer(item: PlanItem, cancel: Event | None, dirs: set[Path] | None = Non
     status, message = "error", "Transfer did not complete."
     try:
         _check_cancel(cancel)
+        if item.status == "deduplicate":
+            _check_source(item)
+            if not os.path.lexists(item.target):
+                raise ValueError("Target disappeared; source kept.")
+            target_info = item.target.lstat()
+            if target_info.st_size != item.size:
+                raise ValueError("Target size changed; source kept.")
+            src_hash = _hash_file(item.source, cancel)
+            tgt_hash = _hash_file(item.target, cancel)
+            if src_hash != tgt_hash:
+                raise ValueError("Target content differs; source kept.")
+            item.source.unlink()
+            status, message = "deduplicated", "Duplicate removed; target retained."
+            return TransferResult(item, status, message)
         _check_source(item)
         _check_directory_path(item.target.parent, missing_ok=True)
         if os.path.lexists(item.target):
